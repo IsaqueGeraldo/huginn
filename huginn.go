@@ -106,7 +106,7 @@ func (h *Huginn) AddClient(conn *websocket.Conn) string {
 func (h *Huginn) RemoveClient(clientID string) {
 	if value, ok := h.Clients.LoadAndDelete(clientID); ok {
 		client := value.(*Client)
-		client.Conn.Close()
+		_ = client.Conn.Close() // Ignore error if already closed
 	}
 
 	if h.DB != nil {
@@ -122,10 +122,9 @@ func (h *Huginn) SearchClient(key string, value interface{}) (*Client, error) {
 	filter := bson.M{"data." + key: value}
 	err := h.DB.FindOne(context.TODO(), filter).Decode(&result)
 	if err != nil {
-		return nil, err // Return error if client is not found
+		return nil, err
 	}
 
-	// Find the client in memory by UUID
 	if client, ok := h.Clients.Load(result.UUID); ok {
 		return client.(*Client), nil
 	}
@@ -180,11 +179,10 @@ func (h *Huginn) sendMessage(clientID string, msg Message) {
 			return
 		}
 
-		// Set a timeout for message sending
 		client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := client.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			log.Printf("[huginn]: Error sending message: %v", err)
-			h.RemoveClient(clientID) // Remove disconnected client immediately
+			h.RemoveClient(clientID)
 		}
 	}
 }
@@ -201,6 +199,7 @@ const (
 	EmitExcept
 )
 
+// Emit sends a message to clients based on the selected mode.
 func (h *Huginn) Emit(message Message, mode int, clients []string) {
 	switch mode {
 	case EmitAll:
@@ -210,26 +209,24 @@ func (h *Huginn) Emit(message Message, mode int, clients []string) {
 			return true
 		})
 	case EmitOnly:
-		includeMap := make(map[string]bool)
-		for _, clientID := range clients {
-			includeMap[clientID] = true
+		clientSet := make(map[string]struct{}, len(clients))
+		for _, id := range clients {
+			clientSet[id] = struct{}{}
 		}
 		h.Clients.Range(func(key, value interface{}) bool {
-			clientID := key.(string)
-			if includeMap[clientID] {
-				h.sendMessage(clientID, message)
+			if _, exists := clientSet[key.(string)]; exists {
+				h.sendMessage(key.(string), message)
 			}
 			return true
 		})
 	case EmitExcept:
-		excludeMap := make(map[string]bool)
-		for _, clientID := range clients {
-			excludeMap[clientID] = true
+		excludeSet := make(map[string]struct{}, len(clients))
+		for _, id := range clients {
+			excludeSet[id] = struct{}{}
 		}
 		h.Clients.Range(func(key, value interface{}) bool {
-			clientID := key.(string)
-			if !excludeMap[clientID] {
-				h.sendMessage(clientID, message)
+			if _, excluded := excludeSet[key.(string)]; !excluded {
+				h.sendMessage(key.(string), message)
 			}
 			return true
 		})
@@ -240,14 +237,43 @@ func (h *Huginn) Emit(message Message, mode int, clients []string) {
 func (h *Huginn) Shutdown() {
 	h.Clients.Range(func(_, value interface{}) bool {
 		client := value.(*Client)
-		client.Conn.Close()
-		h.RemoveClient(client.UUID)
+		_ = client.Conn.Close()
 		return true
 	})
 
 	if h.DB != nil {
 		if err := h.DB.Database().Client().Disconnect(context.TODO()); err != nil {
 			log.Printf("[huginn]: Error disconnecting from MongoDB: %v", err)
+		}
+	}
+}
+
+// Server handles incoming WebSocket connections.
+func (h *Huginn) Server(w http.ResponseWriter, r *http.Request) {
+	conn, err := h.Upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[huginn]: WebSocket upgrade error: %v", err)
+		return
+	}
+
+	clientID := h.AddClient(conn)
+	log.Printf("[huginn]: New client connected: %s", clientID)
+
+	defer h.RemoveClient(clientID)
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			log.Printf("[huginn]: Error reading message: %v", err)
+			break
+		}
+
+		if handler, exists := h.Events[msg.Event]; exists {
+			if err := handler(msg, conn); err != nil {
+				log.Printf("[huginn]: Error handling event '%s': %v", msg.Event, err)
+			}
+		} else {
+			_ = conn.WriteJSON(Message{Event: "error", Data: "Event not found: " + msg.Event})
 		}
 	}
 }

@@ -1,191 +1,214 @@
-Perfeito! Aqui está a documentação ajustada para usar o `go get`:
+Ah, você está certo! As constantes e a função `On` estavam no código original, mas acabei não as incluindo claramente na documentação. Vou corrigir isso agora!
+
+Aqui está a versão atualizada do `README.md`:
 
 ---
 
-# Huginn Documentation
+# Huginn WebSocket Server
 
-## Overview
-
-Huginn is a WebSocket server written in Go, designed for managing connections, handling events, and storing client metadata. It offers MongoDB integration for persistence but can run without it. This guide will help you get started quickly.
+**Huginn** is a WebSocket server built in Go that simplifies managing WebSocket connections with optional MongoDB persistence. It provides features like client management, event-based message broadcasting, dynamic metadata handling, and graceful shutdown.
 
 ---
 
 ## Table of Contents
 
-1. [Installation](#installation)
-2. [Configuration](#configuration)
-3. [Core Concepts](#core-concepts)
-4. [API Reference](#api-reference)
-5. [Usage Examples](#usage-examples)
-6. [Handling Events](#handling-events)
-7. [Shutdown](#shutdown)
-8. [Contributing](#contributing)
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [API Reference](#api-reference)
+  - [Huginn Methods](#huginn-methods)
+  - [Emit Constants](#emit-constants)
+- [Event Handling](#event-handling)
+- [Examples](#examples)
+- [Shutdown](#shutdown)
+- [License](#license)
+
+---
+
+## Features
+
+- **WebSocket Client Management**: Add, remove, search, and update clients dynamically.
+- **Broadcast Modes**: Emit messages to all clients, specific clients, or exclude certain clients.
+- **MongoDB Persistence** (Optional): Store and manage client metadata.
+- **Graceful Shutdown**: Close all active WebSocket connections safely.
+- **Event-Driven Architecture**: Handle WebSocket events with custom handlers.
 
 ---
 
 ## Installation
 
-1. **Add Huginn to your Go project:**
+First, ensure you have Go installed. Clone the repository and install the dependencies:
 
-   ```bash
-   go get github.com/IsaqueGeraldo/huginn
-   ```
+```bash
+git clone https://github.com/IsaqueGeraldo/huginn.git
+cd huginn
+go mod tidy
+```
 
-2. **Import Huginn in your code:**
-
-   ```go
-   import "github.com/IsaqueGeraldo/huginn"
-   ```
-
-3. **Ensure dependencies are up to date:**
-
-   ```bash
-   go mod tidy
-   ```
+Make sure to install MongoDB locally or use a MongoDB cloud instance if you plan to enable persistence.
 
 ---
 
-## Configuration
-
-Create a Huginn instance with optional MongoDB support:
-
-```go
-h := huginn.NewHuginn("your_mongo_uri_here") // MongoDB is optional
-```
-
-If you do not want to use MongoDB, just call:
-
-```go
-h := huginn.NewHuginn()
-```
-
----
-
-## Core Concepts
-
-- **Client:** Represents a WebSocket connection with associated metadata.
-- **Event:** An action sent over the WebSocket, with a handler that defines how to process it.
-- **Metadata:** Stores additional data about a client.
-- **Modes:** Used in message broadcasting (All, Only specific clients, or Except specific clients).
-
----
-
-## API Reference
-
-### Creating a Huginn Instance
-
-```go
-h := huginn.NewHuginn("mongo_uri_here") // Optional MongoDB URI
-```
-
-### Adding a Client
-
-```go
-clientID := h.AddClient(conn)
-```
-
-### Removing a Client
-
-```go
-h.RemoveClient(clientID)
-```
-
-### Searching for a Client by Key/Value
-
-```go
-client, err := h.SearchClient("key", "value")
-if err != nil {
-    log.Println("Client not found")
-}
-```
-
-### Updating Metadata
-
-```go
-h.UpdateMetadata(clientID, "key", "value")
-```
-
-### Removing Metadata
-
-```go
-h.RemoveMetadata(clientID, "key")
-```
-
-### Emitting Events to Clients
-
-```go
-h.Emit(huginn.Message{Event: "test", Data: "hello"}, huginn.EmitAll, nil)
-```
-
-### Graceful Shutdown
-
-```go
-h.Shutdown()
-```
-
----
-
-## Usage Examples
-
-### Example: Creating a Basic Server
+## Usage
 
 ```go
 package main
 
 import (
-    "log"
-    "net/http"
-    "github.com/IsaqueGeraldo/huginn"
+	"log"
+	"net/http"
+	"github.com/IsaqueGeraldo/huginn"
+	"github.com/gorilla/websocket"
 )
 
 func main() {
-    h := huginn.NewHuginn() // Without MongoDB
+	// Initialize Huginn with MongoDB (optional)
+	h := huginn.NewHuginn("mongodb://localhost:27017")
 
-    http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-        conn, err := h.Upgrader.Upgrade(w, r, nil)
-        if err != nil {
-            log.Println("Upgrade error:", err)
-            return
-        }
-        h.AddClient(conn)
-    })
+	// Register an event handler for "message" events
+	h.On("message", func(msg huginn.Message, conn *websocket.Conn) error {
+		log.Printf("Received message: %v", msg.Data)
+		return nil
+	})
 
-    log.Println("Server started on :8080")
-    log.Fatal(http.ListenAndServe(":8080", nil))
+	http.HandleFunc("/ws", h.Server)
+
+	log.Println("Server started on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Run the server:
+
+```bash
+go run main.go
+```
+
+---
+
+## API Reference
+
+### Huginn Methods
+
+#### `NewHuginn(mongoURI ...string) *Huginn`
+
+Creates a new instance of the Huginn WebSocket server.
+
+- **Parameters**:  
+  `mongoURI`: Optional MongoDB connection string.
+- **Returns**: A new `Huginn` instance.
+
+#### `On(event string, handler EventHandler)`
+
+Registers a custom handler for a specific event.
+
+- **Parameters**:
+  - `event`: Name of the event.
+  - `handler`: A function that takes a `Message` and `*websocket.Conn` as parameters and returns an error.
+
+Example:
+
+```go
+h.On("chat", func(msg huginn.Message, conn *websocket.Conn) error {
+    log.Printf("Chat event received: %s", msg.Data)
+    return nil
+})
+```
+
+#### `AddClient(conn *websocket.Conn) string`
+
+Adds a new WebSocket client and returns the generated client UUID.
+
+#### `RemoveClient(clientID string)`
+
+Removes a client by its UUID and closes the connection.
+
+#### `SearchClient(key string, value interface{}) (*Client, error)`
+
+Searches for a client by a key-value pair in the metadata.
+
+#### `UpdateMetadata(clientID, key string, val interface{})`
+
+Updates or adds metadata for a specific client.
+
+#### `RemoveMetadata(clientID, key string)`
+
+Removes a key-value pair from a client’s metadata.
+
+#### `Emit(message Message, mode int, clients []string)`
+
+Broadcasts a message to clients based on the provided mode.
+
+---
+
+### Emit Constants
+
+Huginn provides three modes for emitting messages:
+
+```go
+const (
+    EmitAll = iota     // Send to all connected clients
+    EmitOnly           // Send only to specific clients
+    EmitExcept         // Send to all clients except specified ones
+)
+```
+
+- **EmitAll**: Sends the message to all connected clients.
+- **EmitOnly**: Sends the message only to the specified clients.
+- **EmitExcept**: Sends the message to all clients except those listed.
+
+---
+
+## Event Handling
+
+Huginn uses an event-driven model. You can register custom handlers for specific events using the `On` method.
+
+When a client sends a message with an `event` field matching the registered event, the corresponding handler is executed.
+
+Example of a message:
+
+```json
+{
+  "event": "message",
+  "data": {
+    "content": "Hello, world!",
+    "timestamp": "2024-10-17T12:00:00Z"
+  }
 }
 ```
 
 ---
 
-## Handling Events
+## Examples
 
-You can register custom event handlers with the `On` method:
+### Sending a Message to a Client
 
 ```go
-h.On("greet", func(msg huginn.Message, conn *websocket.Conn) error {
-    response := huginn.Message{Event: "response", Data: "Hello, client!"}
-    return conn.WriteJSON(response)
-})
+msg := huginn.Message{Event: "message", Data: "Hello!"}
+h.Emit(msg, huginn.EmitOnly, []string{"client-uuid-123"})
+```
+
+### Broadcasting to All Clients Except Specific Ones
+
+```go
+msg := huginn.Message{Event: "notification", Data: "Server update!"}
+h.Emit(msg, huginn.EmitExcept, []string{"client-uuid-123"})
 ```
 
 ---
 
 ## Shutdown
 
-When the server is stopped, ensure all connections are closed gracefully:
+Ensure a clean shutdown of the server by calling the `Shutdown` method:
 
 ```go
-h.Shutdown()
+defer h.Shutdown()
 ```
 
----
-
-## Contributing
-
-Contributions are welcome! If you find a bug or want to propose a feature, please open an issue or submit a pull request on [GitHub](https://github.com/IsaqueGeraldo/huginn).
+This will close all active WebSocket connections and clean up MongoDB resources if enabled.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
