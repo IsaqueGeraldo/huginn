@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -24,7 +23,7 @@ type Metadata struct {
 
 var upgrader = websocket.Upgrader{
 	Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
-		log.Printf("[huginn]: WebSocket Upgrade error: %v\n", reason)
+		fmt.Printf("[huginn]: WebSocket Upgrade error: %v\n", reason)
 	},
 	CheckOrigin: func(r *http.Request) bool {
 		// Adjust this to allow only trusted origins
@@ -63,7 +62,7 @@ func NewHuginn(mongoURI ...string) *Huginn {
 	if len(mongoURI) > 0 && mongoURI[0] != "" {
 		col, err := connectMongo(mongoURI[0])
 		if err != nil {
-			log.Printf("[huginn]: Error connecting to MongoDB: %v", err)
+			fmt.Printf("[huginn]: Error connecting to MongoDB: %v", err)
 		} else {
 			collection = col
 		}
@@ -95,7 +94,7 @@ func (h *Huginn) AddClient(conn *websocket.Conn) string {
 
 	if h.DB != nil {
 		if _, err := h.DB.InsertOne(context.TODO(), metadata); err != nil {
-			log.Printf("[huginn]: Error storing client in MongoDB: %v", err)
+			fmt.Printf("[huginn]: Error storing client in MongoDB: %v", err)
 		}
 	}
 
@@ -111,7 +110,7 @@ func (h *Huginn) RemoveClient(clientID string) {
 
 	if h.DB != nil {
 		if _, err := h.DB.DeleteOne(context.TODO(), bson.M{"uuid": clientID}); err != nil {
-			log.Printf("[huginn]: Error removing client from MongoDB: %v", err)
+			fmt.Printf("[huginn]: Error removing client from MongoDB: %v", err)
 		}
 	}
 }
@@ -144,7 +143,7 @@ func (h *Huginn) UpdateMetadata(clientID, key string, val interface{}) {
 				bson.M{"$set": bson.M{"data." + key: val}},
 			)
 			if err != nil {
-				log.Printf("[huginn]: Error updating metadata in MongoDB: %v", err)
+				fmt.Printf("[huginn]: Error updating metadata in MongoDB: %v", err)
 			}
 		}
 	}
@@ -163,7 +162,7 @@ func (h *Huginn) RemoveMetadata(clientID, key string) {
 				bson.M{"$unset": bson.M{"data." + key: ""}},
 			)
 			if err != nil {
-				log.Printf("[huginn]: Error removing metadata from MongoDB: %v", err)
+				fmt.Printf("[huginn]: Error removing metadata from MongoDB: %v", err)
 			}
 		}
 	}
@@ -175,13 +174,13 @@ func (h *Huginn) sendMessage(clientID string, msg Message) {
 		client := value.(*Client)
 		data, err := json.Marshal(msg)
 		if err != nil {
-			log.Printf("[huginn]: Error marshalling message: %v", err)
+			fmt.Printf("[huginn]: Error marshalling message: %v", err)
 			return
 		}
 
 		client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := client.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			log.Printf("[huginn]: Error sending message: %v", err)
+			fmt.Printf("[huginn]: Error sending message: %v", err)
 			h.RemoveClient(clientID)
 		}
 	}
@@ -243,7 +242,7 @@ func (h *Huginn) Shutdown() {
 
 	if h.DB != nil {
 		if err := h.DB.Database().Client().Disconnect(context.TODO()); err != nil {
-			log.Printf("[huginn]: Error disconnecting from MongoDB: %v", err)
+			fmt.Printf("[huginn]: Error disconnecting from MongoDB: %v", err)
 		}
 	}
 }
@@ -252,25 +251,25 @@ func (h *Huginn) Shutdown() {
 func (h *Huginn) Server(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[huginn]: WebSocket upgrade error: %v", err)
+		fmt.Printf("[huginn]: WebSocket upgrade error: %v", err)
 		return
 	}
 
 	clientID := h.AddClient(conn)
-	log.Printf("[huginn]: New client connected: %s", clientID)
+	fmt.Printf("[huginn]: New client connected: %s", clientID)
 
 	defer h.RemoveClient(clientID)
 
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
-			log.Printf("[huginn]: Error reading message: %v", err)
+			fmt.Printf("[huginn]: Error reading message: %v", err)
 			break
 		}
 
 		if handler, exists := h.Events[msg.Event]; exists {
 			if err := handler(msg, conn); err != nil {
-				log.Printf("[huginn]: Error handling event '%s': %v", msg.Event, err)
+				fmt.Printf("[huginn]: Error handling event '%s': %v", msg.Event, err)
 			}
 		} else {
 			_ = conn.WriteJSON(Message{Event: "error", Data: "Event not found: " + msg.Event})
